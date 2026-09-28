@@ -349,3 +349,137 @@
  overlay.textContent = "FPS: " + fps.toFixed(1) + "\nRes: n/a";
  }
  } catch(e) {
+ overlay.textContent = "FPS: --\nRes: --\nerr: " + e.message;
+ }
+ }, 1000);
+ }
+
+ // ============ FILE UPLOAD ============
+ if (!useDirectUrl) {
+ const fileInput = document.getElementById("fileUpload");
+ const uploadBtn = document.getElementById("uploadStart");
+ const statusEl = document.getElementById("status");
+
+ fileInput.addEventListener("change", (e) => {
+ const file = e.target.files[0];
+ if (!file) { uploadBtn.disabled = true; return; }
+ statusEl.textContent = "File selected: " + file.name + " (" + formatSize(file.size) + ")";
+ uploadBtn.disabled = false;
+ debugLog("File selected: " + file.name);
+ });
+
+ uploadBtn.addEventListener("click", () => {
+ const file = fileInput.files[0];
+ if (!file) return;
+ uploadBtn.disabled = true;
+ fileInput.disabled = true;
+ statusEl.textContent = "Loading...";
+ 
+ const gameUrl = URL.createObjectURL(file);
+ debugLog("Upload: Creating blob URL for " + file.name);
+ startEJS(gameUrl, file.name);
+ });
+
+ // ============ API ROM PICKER MODE ============
+ async function loadRoms() {
+ try {
+ const res = await fetch("api/roms");
+ const data = await res.json();
+ const roms = data.roms || [];
+ const bios = data.bios || {};
+
+ if (data.coreVersion) {
+ window.EJS_paths = {
+ "flycast-wasm.data": "data/cores/flycast-wasm.data?v=" + data.coreVersion,
+ "flycast-legacy-wasm.data": "data/cores/flycast-legacy-wasm.data?v=" + data.coreVersion
+ };
+ }
+
+ if (!bios.present) {
+ statusEl.innerHTML = '<span class="warn">Missing BIOS: copy ' +
+ (bios.needed || ["dc_boot.bin", "dc_flash.bin"]).join(", ") + ' to frontend/bios/</span>';
+ }
+
+ const select = document.getElementById("rom");
+ const startBtn = document.getElementById("start");
+
+ select.innerHTML = "";
+ if (roms.length === 0) {
+ select.innerHTML = '<option value="">No ROMs in frontend/roms/</option>';
+ startBtn.disabled = true;
+ return;
+ }
+
+ for (const rom of roms) {
+ const opt = document.createElement("option");
+ opt.value = rom.file;
+ opt.textContent = rom.file + " (" + formatSize(rom.size) + ")";
+ opt.dataset.type = rom.type;
+ opt.dataset.partCount = rom.partCount || "0";
+ select.appendChild(opt);
+ }
+
+ select.disabled = false;
+ startBtn.disabled = false;
+ log("Detected " + roms.length + " ROMs");
+ } catch (e) {
+ statusEl.innerHTML = '<span class="warn">Error loading ROMs: ' + e.message + '</span>';
+ debugLog("API error: " + e.message, "error");
+ }
+ }
+
+ const select = document.getElementById("rom");
+ const startBtn = document.getElementById("start");
+
+ startBtn.addEventListener("click", async () => {
+ const file = select.value;
+ if (!file) return;
+
+ startBtn.disabled = true;
+ select.disabled = true;
+
+ try {
+ const res = await fetch("api/roms");
+ const data = await res.json();
+ const rom = (data.roms || []).find(r => r.file === file);
+ if (!rom) { log("ROM not found: " + file); startBtn.disabled = false; select.disabled = false; return; }
+
+ let gameUrl = rom.url;
+
+ // Handle multi-part ROMs
+ if (rom.partCount && rom.partCount > 1) {
+ log("ROM split into " + rom.partCount + " parts, merging...");
+ debugLog("Merging " + rom.partCount + " parts...");
+ try {
+ gameUrl = await mergeFiles(
+ getParts(rom.url, 1, rom.partCount),
+ (index) => {
+ log("Fetched part " + (index + 1) + "/" + rom.partCount);
+ debugLog("Merged part " + (index + 1) + "/" + rom.partCount);
+ }
+ );
+ log("Merged into blob URL: " + gameUrl);
+ debugLog("Merge complete");
+ } catch (e) {
+ log("Error merging parts: " + e.message);
+ debugLog("Merge error: " + e.message, "error");
+ startBtn.disabled = false;
+ select.disabled = false;
+ return;
+ }
+ }
+
+ startEJS(gameUrl, rom.file, rom.coreOptions);
+ } catch (e) {
+ log("Error: " + e.message);
+ debugLog("Start error: " + e.message, "error");
+ startBtn.disabled = false;
+ select.disabled = false;
+ }
+ });
+
+ loadRoms();
+ }
+ </script>
+ </body>
+</html>
