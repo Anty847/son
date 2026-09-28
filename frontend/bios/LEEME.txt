@@ -1,0 +1,33 @@
+PLACE YOUR DREAMCAST BIOS HERE (legal, from your own console).
+
+Required files:
+  dc_boot.bin   (main BIOS, 2 MB)
+  dc_flash.bin  (region flash, 128 KB)
+
+Optional:
+  dc_nvmem.bin  (non-volatile memory)
+
+The emulator finds them automatically. If they are missing, the page will
+show a "BIOS missing" warning.
+
+The Dreamcast BIOS is copyrighted by Sega. You must provide your own legally
+obtained copy dumped from hardware you own. This package does not include it.
+
+============================================================
+EN ESPAÑOL / IN SPANISH
+============================================================
+
+COLOCA AQUÍ TU BIOS DE DREAMCAST (legal, copia de tu propia consola).
+
+Archivos necesarios:
+  dc_boot.bin   (BIOS principal, 2 MB)
+  dc_flash.bin  (flash de región, 128 KB)
+
+Opcional:
+  dc_nvmem.bin  (memoria no volátil)
+
+El emulador los busca automáticamente. Si no aparecen, la página
+mostrará un aviso de "Falta BIOS".
+
+La BIOS de Dreamcast tiene copyright de Sega. Debes aportar tu propia copia
+legal, extraída de hardware que poseas. Este paquete no la incluye.
