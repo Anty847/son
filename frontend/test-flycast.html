@@ -394,11 +394,13 @@
 }
 
  // ============ FILE UPLOAD ============
- if (!useDirectUrl) {
+if (!useDirectUrl) {
  const fileInput = document.getElementById("fileUpload");
  const uploadBtn = document.getElementById("uploadStart");
  const statusEl = document.getElementById("status");
 
+ // Prevent duplicate event listeners
+ if (!uploadBtn._uploadListenerAttached) {
  fileInput.addEventListener("change", (e) => {
  const file = e.target.files[0];
  if (!file) { uploadBtn.disabled = true; return; }
@@ -407,17 +409,29 @@
  debugLog("File selected: " + file.name);
  });
 
- uploadBtn.addEventListener("click", () => {
+ uploadBtn.addEventListener("click", (e) => {
+ e.preventDefault();
+ e.stopPropagation();
+ 
  const file = fileInput.files[0];
- if (!file) return;
+ if (!file) {
+ debugLog("No file selected", "warn");
+ return;
+ }
+ 
  uploadBtn.disabled = true;
  fileInput.disabled = true;
  statusEl.textContent = "Loading...";
  
+ debugLog("Creating blob URL for " + file.name);
  const gameUrl = URL.createObjectURL(file);
- debugLog("Upload: Creating blob URL for " + file.name);
  startEJS(gameUrl, file.name);
  });
+ 
+ uploadBtn._uploadListenerAttached = true;
+ debugLog("Upload listeners attached");
+ }
+
 
  // ============ API ROM PICKER MODE ============
  async function loadRoms() {
