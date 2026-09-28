@@ -1,0 +1,31 @@
+PLACE YOUR DREAMCAST GAMES HERE (legal copies).
+
+Supported formats:
+  .chd  — GD-ROM image (recommended, single file)
+  .zip  — ZIP containing a .gdi + its tracks (track01.bin, etc.)
+  .cue  — plus the .bin files of its tracks in the same folder
+  .gdi  — plus its tracks in the same folder
+
+The emulator detects the format automatically and adds the game to the menu.
+No editing needed.
+
+Dreamcast games are copyrighted by their respective owners. You must provide
+your own legally obtained copies. This package does not include any games.
+
+============================================================
+EN ESPAÑOL / IN SPANISH
+============================================================
+
+COLOCA AQUÍ TUS JUEGOS DE DREAMCAST (copias legales).
+
+Formatos soportados:
+  .chd  — imagen GD-ROM (recomendado, un solo archivo)
+  .zip  — ZIP que contenga un .gdi + sus tracks (track01.bin, etc.)
+  .cue  — + los .bin de sus tracks en la misma carpeta
+  .gdi  — + sus tracks en la misma carpeta
+
+El emulador detecta el formato automáticamente y lo añade al menú.
+No hace falta editar nada.
+
+Los juegos de Dreamcast tienen copyright de sus respectivos propietarios.
+Debes aportar tus propias copias legales. Este paquete no incluye ningún juego.
