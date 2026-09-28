@@ -1,0 +1,19 @@
+{
+  "name": "flycast-wasm",
+  "version": "1.0.0",
+  "description": "Sega Dreamcast emulator in the browser (flycast-wasm). Run your own legally dumped BIOS and games. / Emulador Sega Dreamcast en el navegador (flycast-wasm). Ejecuta tu propia BIOS y tus juegos legalmente copiados.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "serve": "node server.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "author": "nasomers",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nasomers/flycast-wasm"
+  },
+  "license": "GPL-2.0"
+}
