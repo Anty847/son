@@ -9,7 +9,7 @@
  #wrap { display: flex; flex-direction: column; align-items: center; padding: 20px; }
  #game { width: 100%; max-width: 1024px; aspect-ratio: 4/3; background: #000; }
  label { display: block; margin: 12px 0 4px; }
- select { font-size: 15px; padding: 6px; }
+ select, input[type="file"] { font-size: 15px; padding: 6px; }
  #log { margin-top: 12px; width: 100%; max-width: 1024px; height: 200px; overflow: auto; background: #000; border: 1px solid #333; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
  #overlay { position: fixed; top: 8px; right: 8px; z-index: 9999; background: rgba(0,0,0,0.75); color: #0f0; font-family: monospace; font-size: 13px; padding: 6px 10px; border: 1px solid #444; border-radius: 4px; pointer-events: none; white-space: pre; line-height: 1.4; }
  #status { color: #ffa; font-size: 14px; margin: 8px 0; }
@@ -23,11 +23,19 @@
  <div id="wrap">
  <h2>Flycast WASM (Dreamcast) — local test</h2>
  <div id="romSelector">
+ <h3>Upload a ROM</h3>
+ <label for="fileUpload">Select ROM file:</label>
+ <input type="file" id="fileUpload" accept=".iso,.bin,.gdi,.cdi,.chd">
+ <div id="status"></div>
+ <button id="uploadStart" disabled>Load Game</button>
+
+ <hr style="margin: 24px 0; border: none; border-top: 1px solid #444;">
+
+ <h3>Or Select from API</h3>
  <label for="rom">Select ROM (auto-detected):</label>
  <select id="rom" disabled>
  <option>Loading ROMs...</option>
  </select>
- <div id="status"></div>
  <button id="start" disabled>Start</button>
  </div>
  <div id="game"></div>
@@ -36,7 +44,6 @@
 
  <script>
  // Patch HTMLCanvasElement.getContext to handle GL_EXTENSIONS (0x1F03)
- // which RetroArch's video driver calls but WebGL doesn't support natively.
  const origGetContext = HTMLCanvasElement.prototype.getContext;
  HTMLCanvasElement.prototype.getContext = function(...args) {
  const ctx = origGetContext.apply(this, args);
@@ -131,7 +138,6 @@
  "/dc/dc_nvmem.bin": "bios/dc_nvmem.bin"
  };
 
- // Build external files map for EJS (BIOS + track files for multi-file games)
  function buildExternalFiles(rom) {
  const files = Object.assign({}, BIOS_FILES);
  const romType = rom.type || directGameType;
@@ -152,25 +158,13 @@
  return Math.round(bytes / 1024) + " KB";
  }
 
- const select = document.getElementById("rom");
- const statusEl = document.getElementById("status");
- const startBtn = document.getElementById("start");
- const romSelector = document.getElementById("romSelector");
-
- // ============ DIRECT URL MODE ============
- if (useDirectUrl) {
- romSelector.classList.add("hidden");
- window.EJS_gameUrl = directGameUrl;
- window.EJS_externalFiles = buildExternalFiles({
- type: directGameType,
- tracks: directGameTracks,
- romsDir: (window.gameconfig && window.gameconfig.romsDir) || "roms/"
- });
+ function startEJS(gameUrl, gameName) {
+ window.EJS_gameUrl = gameUrl;
+ window.EJS_externalFiles = buildExternalFiles({ type: "single", tracks: [] });
+ window.EJS_gameName = gameName;
  
- log("Loading from direct URL: " + directGameName);
- log("gameUrl: " + directGameUrl);
- log("gameType: " + directGameType + ", tracks: " + directGameTracks.length);
- log("externalFiles: " + Object.keys(window.EJS_externalFiles).length);
+ document.getElementById("romSelector").classList.add("hidden");
+ log("Starting: " + gameName);
  
  const script = document.createElement("script");
  script.src = "data/loader.js";
@@ -218,8 +212,36 @@
  overlay.textContent = "FPS: --\nRes: --\nerr: " + e.message;
  }
  }, 1000);
- 
+ }
+
+ // ============ DIRECT URL MODE ============
+ if (useDirectUrl) {
+ document.getElementById("romSelector").classList.add("hidden");
+ startEJS(directGameUrl, directGameName);
  } else {
+ // ============ FILE UPLOAD ============
+ const fileInput = document.getElementById("fileUpload");
+ const uploadBtn = document.getElementById("uploadStart");
+ const statusEl = document.getElementById("status");
+
+ fileInput.addEventListener("change", (e) => {
+ const file = e.target.files[0];
+ if (!file) { uploadBtn.disabled = true; return; }
+ statusEl.textContent = "File selected: " + file.name + " (" + formatSize(file.size) + ")";
+ uploadBtn.disabled = false;
+ });
+
+ uploadBtn.addEventListener("click", () => {
+ const file = fileInput.files[0];
+ if (!file) return;
+ uploadBtn.disabled = true;
+ fileInput.disabled = true;
+ statusEl.textContent = "Loading...";
+ 
+ const gameUrl = URL.createObjectURL(file);
+ startEJS(gameUrl, file.name);
+ });
+
  // ============ API ROM PICKER MODE ============
  async function loadRoms() {
  try {
@@ -228,7 +250,6 @@
  const roms = data.roms || [];
  const bios = data.bios || {};
 
- // Cache-bust the core data file with version hash
  if (data.coreVersion) {
  window.EJS_paths = {
  "flycast-wasm.data": "data/cores/flycast-wasm.data?v=" + data.coreVersion,
@@ -239,9 +260,10 @@
  if (!bios.present) {
  statusEl.innerHTML = '<span class="warn">Missing BIOS: copy ' +
  (bios.needed || ["dc_boot.bin", "dc_flash.bin"]).join(", ") + ' to frontend/bios/</span>';
- } else {
- statusEl.textContent = "BIOS OK";
  }
+
+ const select = document.getElementById("rom");
+ const startBtn = document.getElementById("start");
 
  select.innerHTML = "";
  if (roms.length === 0) {
@@ -266,6 +288,9 @@
  statusEl.innerHTML = '<span class="warn">Error loading ROMs: ' + e.message + '</span>';
  }
  }
+
+ const select = document.getElementById("rom");
+ const startBtn = document.getElementById("start");
 
  startBtn.addEventListener("click", async () => {
  const file = select.value;
@@ -301,35 +326,16 @@
  }
  }
 
- // Set up EJS for this ROM
- window.EJS_gameUrl = gameUrl;
- window.EJS_externalFiles = buildExternalFiles(rom);
- window.EJS_gameName = rom.file;
- 
- romSelector.classList.add("hidden");
- log("Starting: " + rom.file);
- 
- const script = document.createElement("script");
- script.src = "data/loader.js";
- document.body.appendChild(script);
- 
- // JIT diagnostic poller
- let diagCount = 0;
- const poller = setInterval(() => {
- if (!window.EJS_emulator || !window.EJS_emulator.Module) { diagCount++; return; }
- const M = window.EJS_emulator.Module;
- const prof = M._prof || {};
- const cacheSize = M._wasmBlockCache ? Object.keys(M._wasmBlockCache).length : -1;
- const trapCount = M._wasmTrapCount || 0;
- const jitReady = M._jitImportsResolved ? true : false;
- log("[JIT] blocks=" + cacheSize + " exec=" + (prof.execCount||0) + " execMs=" + (prof.execMs ? Math.round(prof.execMs) : 0) + " traps=" + trapCount + " jitReady=" + jitReady);
- diagCount++;
- if (diagCount > 30) clearInterval(poller);
- }, 2000);
- 
- // FPS + resolution overlay
- let lastFrame = 0, lastTime = performance.now();
- const overlay = document.getElementById("overlay");
- const fpsPoller = setInterval(() => {
- const emu = window.EJS_emulator;
- if (!emu) { overlay.textContent = "FPS: --\nRes: --\n(waiting for core...)
+ startEJS(gameUrl, rom.file);
+ } catch (e) {
+ log("Error: " + e.message);
+ startBtn.disabled = false;
+ select.disabled = false;
+ }
+ });
+
+ loadRoms();
+ }
+ </script>
+ </body>
+</html>
