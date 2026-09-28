@@ -5,8 +5,7 @@
  <title>Flycast WASM - Dreamcast test</title>
  <meta name="viewport" content="width=device-width, initial-scale=1">
  <style>
- body, html { height: 100%; margin: 0; background: #111;
-color: #eee; font-family: sans-serif; }
+ body, html { height: 100%; margin: 0; background: #111; color: #eee; font-family: sans-serif; }
  #wrap { display: flex; flex-direction: column; align-items: center; padding: 20px; }
  #game { width: 100%; max-width: 1024px; aspect-ratio: 4/3; background: #000; }
  label { display: block; margin: 12px 0 4px; }
@@ -24,23 +23,20 @@ color: #eee; font-family: sans-serif; }
  <div id="wrap">
  <h2>Flycast WASM (Dreamcast) — local test</h2>
  <div id="romSelector">
- <label for="rom">Select ROM (auto-detectado):</label>
+ <label for="rom">Select ROM (auto-detected):</label>
  <select id="rom" disabled>
- <option>Cargando ROMs...</option>
+ <option>Loading ROMs...</option>
  </select>
  <div id="status"></div>
- <button id="start" disabled>Iniciar</button>
+ <button id="start" disabled>Start</button>
  </div>
  <div id="game"></div>
  <div id="log"></div>
  </div>
 
  <script>
- // The flycast core's glGetString override calls
- // ctx.getParameter(GL_EXTENSIONS) (enum 0x1F03 = 7939), which is INVALID
- // in WebGL and leaves a pending GL_INVALID_ENUM that makes RetroArch's
- // video driver init fail. Patch getParameter so GL_EXTENSIONS returns the
- // supported extensions string.
+ // Patch HTMLCanvasElement.getContext to handle GL_EXTENSIONS (0x1F03)
+ // which RetroArch's video driver calls but WebGL doesn't support natively.
  const origGetContext = HTMLCanvasElement.prototype.getContext;
  HTMLCanvasElement.prototype.getContext = function(...args) {
  const ctx = origGetContext.apply(this, args);
@@ -65,6 +61,41 @@ color: #eee; font-family: sans-serif; }
  </script>
 
  <script>
+ // File merging utilities for multi-part ROMs
+ function mergeFiles(fileParts, cb) {
+ return new Promise((resolve, reject) => {
+ let buffers = [];
+ function fetchPart(index) {
+ if (index >= fileParts.length) {
+ let mergedBlob = new Blob(buffers);
+ let mergedFileUrl = URL.createObjectURL(mergedBlob);
+ resolve(mergedFileUrl);
+ return;
+ }
+ fetch(fileParts[index])
+ .then((response) => response.arrayBuffer())
+ .then((data) => {
+ buffers.push(data);
+ fetchPart(index + 1);
+ })
+ .catch(reject);
+ cb(index);
+ }
+ fetchPart(0);
+ });
+ }
+
+ function getParts(file, start, end) {
+ let parts = [];
+ for (let i = start; i <= end; i++) {
+ let padded = String(i).padStart((end+"").length, '0');
+ parts.push(file + ".part" + padded);
+ }
+ return parts;
+ }
+ </script>
+
+ <script>
  const logEl = document.getElementById("log");
  function log(msg) {
  logEl.textContent += "[" + new Date().toISOString().slice(11,19) + "] " + msg + "\n";
@@ -78,8 +109,10 @@ color: #eee; font-family: sans-serif; }
  const useDirectUrl = paramUrl || (window.gameconfig && window.gameconfig.url);
  const directGameUrl = paramUrl || (window.gameconfig && window.gameconfig.url);
  const directGameName = paramName || (window.gameconfig && window.gameconfig.name) || "Dreamcast Game";
+ const directGameType = (window.gameconfig && window.gameconfig.type) || "single";
+ const directGameTracks = (window.gameconfig && window.gameconfig.tracks) || [];
 
- // Base EJS config
+ // Base EJS configuration
  window.EJS_DEBUG_XX = true;
  window.EJS_pathtodata = "data/";
  window.EJS_player = "#game";
@@ -89,26 +122,25 @@ color: #eee; font-family: sans-serif; }
  window.EJS_startOnLoaded = useDirectUrl ? true : false;
  window.EJS_disableDatabases = true;
  window.EJS_threads = false;
- // Don't let EJS auto-create a .cue from the tracks; zips already
- // contain a valid .gdi that flycast should boot directly.
  window.EJS_disableCue = true;
 
- // BIOS lives in the FS at "/" (system dir resolves to root in this build)
+ // BIOS file mapping
  const BIOS_FILES = {
  "/dc/dc_boot.bin": "bios/dc_boot.bin",
  "/dc/dc_flash.bin": "bios/dc_flash.bin",
  "/dc/dc_nvmem.bin": "bios/dc_nvmem.bin"
  };
 
- // Build the EJS external-files map for a game: BIOS +
- // (for multi-file cue/gdi games) the track files placed at the FS root,
- // where flycast looks them up relative to the cue/gdi.
+ // Build external files map for EJS (BIOS + track files for multi-file games)
  function buildExternalFiles(rom) {
  const files = Object.assign({}, BIOS_FILES);
- if (rom && rom.type === "multi" && Array.isArray(rom.tracks)) {
- for (const track of rom.tracks) {
- // The cue/gdi is mounted at "/" so tracks resolve to "/<name>"
- files["/" + track] = "roms/" + encodeURI(track);
+ const romType = rom.type || directGameType;
+ const romTracks = rom.tracks || directGameTracks;
+ const romsDir = rom.romsDir || "roms/";
+ 
+ if (romType === "multi" && Array.isArray(romTracks)) {
+ for (const track of romTracks) {
+ files["/" + track] = romsDir + encodeURI(track);
  }
  }
  return files;
@@ -125,119 +157,25 @@ color: #eee; font-family: sans-serif; }
  const startBtn = document.getElementById("start");
  const romSelector = document.getElementById("romSelector");
 
- // If using direct URL, auto-load and hide ROM picker
+ // ============ DIRECT URL MODE ============
  if (useDirectUrl) {
  romSelector.classList.add("hidden");
  window.EJS_gameUrl = directGameUrl;
- window.EJS_externalFiles = BIOS_FILES;
+ window.EJS_externalFiles = buildExternalFiles({
+ type: directGameType,
+ tracks: directGameTracks,
+ romsDir: (window.gameconfig && window.gameconfig.romsDir) || "roms/"
+ });
  
  log("Loading from direct URL: " + directGameName);
  log("gameUrl: " + directGameUrl);
- log("externalFiles: " + Object.keys(BIOS_FILES).length);
- 
- const script = document.createElement("script");
- script.src = "data/loader.js";
- document.body.appendChild(script);
- 
- // FPS + resolution overlay
- let lastFrame = 0, lastTime = performance.now();
- const overlay = document.getElementById("overlay");
- const fpsPoller = setInterval(() => {
- const emu = window.EJS_emulator;
- if (!emu) { overlay.textContent = "FPS: --\nRes: --\n(esperando core...)"; return; }
- const gm = emu.gameManager;
- if (!gm) { overlay.textContent = "FPS: --\nRes: --\n(cargando...)"; return; }
- let fps = 0;
- try {
- const f = gm.getFrameNum();
- const now = performance.now();
- if (lastFrame > 0 && now > lastTime) {
- fps = (f - lastFrame) * 1000 / (now - lastTime);
- }
- lastFrame = f;
- lastTime = now;
- let w = gm.getVideoDimensions("width");
- let h = gm.getVideoDimensions("height");
- if (w > 0 && h > 0) {
- overlay.textContent = "FPS: " + fps.toFixed(1) + "\nRes: " + w + "x" + h;
- } else {
- overlay.textContent = "FPS: " + fps.toFixed(1) + "\nRes: n/a";
- }
- } catch(e) {
- overlay.textContent = "FPS: --\nRes: --\nerr: " + e.message;
- }
- }, 1000);
- } else {
- // Original ROM picker flow
- async function loadRoms() {
- try {
- const res = await fetch("api/roms");
- const data = await res.json();
- const roms = data.roms || [];
- const bios = data.bios || {};
-
- // Cache-bust the core: whenever a new core is compiled, the
- // server returns a different hash and the browser fetches the
- // fresh .data instead of serving the cached one.
- if (data.coreVersion) {
- window.EJS_paths = {
- "flycast-wasm.data": "data/cores/flycast-wasm.data?v=" + data.coreVersion,
- "flycast-legacy-wasm.data": "data/cores/flycast-legacy-wasm.data?v=" + data.coreVersion
- };
- }
-
- if (!bios.present) {
- statusEl.innerHTML = '<span class="warn">Falta BIOS: copia a frontend/bios/ los ficheros ' +
- (bios.needed || ["dc_boot.bin", "dc_flash.bin"]).join(", ") + '.</span>';
- } else {
- statusEl.textContent = "BIOS OK";
- }
-
- select.innerHTML = "";
- if (roms.length === 0) {
- select.innerHTML = '<option value="">No hay ROMs en frontend/roms/</option>';
- startBtn.disabled = true;
- return;
- }
-
- for (const rom of roms) {
- const opt = document.createElement("option");
- opt.value = rom.file;
- opt.textContent = rom.file + " (" + formatSize(rom.size) + ")";
- opt.dataset.type = rom.type;
- select.appendChild(opt);
- }
-
- select.disabled = false;
- startBtn.disabled = false;
- log("Detectadas " + roms.length + " ROMs: " + roms.map(r => r.ext).join(", "));
- } catch (e) {
- statusEl.innerHTML = '<span class="warn">Error cargando ROMs: ' + e.message + '</span>';
- }
- }
-
- startBtn.addEventListener("click", () => {
- const file = select.value;
- if (!file) return;
-
- // Find the selected rom in the fetched list
- fetch("api/roms").then(res => res.json()).then(data => {
- const rom = (data.roms || []).find(r => r.file === file);
- if (!rom) { log("ROM no encontrada: " + file); return; }
-
- window.EJS_externalFiles = buildExternalFiles(rom);
- window.EJS_gameUrl = rom.url;
- window.EJS_gameName = rom.file;
- log("Cargando: " + rom.file + " [tipo=" + rom.type + ", tracks=" + (rom.tracks || []).length + "]");
- log("gameUrl: " + rom.url);
+ log("gameType: " + directGameType + ", tracks: " + directGameTracks.length);
  log("externalFiles: " + Object.keys(window.EJS_externalFiles).length);
-
+ 
  const script = document.createElement("script");
  script.src = "data/loader.js";
  document.body.appendChild(script);
- startBtn.disabled = true;
- select.disabled = true;
-
+ 
  // JIT diagnostic poller
  let diagCount = 0;
  const poller = setInterval(() => {
@@ -251,15 +189,15 @@ color: #eee; font-family: sans-serif; }
  diagCount++;
  if (diagCount > 30) clearInterval(poller);
  }, 2000);
-
+ 
  // FPS + resolution overlay
  let lastFrame = 0, lastTime = performance.now();
  const overlay = document.getElementById("overlay");
  const fpsPoller = setInterval(() => {
  const emu = window.EJS_emulator;
- if (!emu) { overlay.textContent = "FPS: --\nRes: --\n(esperando core...)"; return; }
+ if (!emu) { overlay.textContent = "FPS: --\nRes: --\n(waiting for core...)"; return; }
  const gm = emu.gameManager;
- if (!gm) { overlay.textContent = "FPS: --\nRes: --\n(cargando...)"; return; }
+ if (!gm) { overlay.textContent = "FPS: --\nRes: --\n(loading...)"; return; }
  let fps = 0;
  try {
  const f = gm.getFrameNum();
@@ -280,11 +218,118 @@ color: #eee; font-family: sans-serif; }
  overlay.textContent = "FPS: --\nRes: --\nerr: " + e.message;
  }
  }, 1000);
- });
- });
+ 
+ } else {
+ // ============ API ROM PICKER MODE ============
+ async function loadRoms() {
+ try {
+ const res = await fetch("api/roms");
+ const data = await res.json();
+ const roms = data.roms || [];
+ const bios = data.bios || {};
 
- loadRoms();
+ // Cache-bust the core data file with version hash
+ if (data.coreVersion) {
+ window.EJS_paths = {
+ "flycast-wasm.data": "data/cores/flycast-wasm.data?v=" + data.coreVersion,
+ "flycast-legacy-wasm.data": "data/cores/flycast-legacy-wasm.data?v=" + data.coreVersion
+ };
  }
- </script>
- </body>
-</html>
+
+ if (!bios.present) {
+ statusEl.innerHTML = '<span class="warn">Missing BIOS: copy ' +
+ (bios.needed || ["dc_boot.bin", "dc_flash.bin"]).join(", ") + ' to frontend/bios/</span>';
+ } else {
+ statusEl.textContent = "BIOS OK";
+ }
+
+ select.innerHTML = "";
+ if (roms.length === 0) {
+ select.innerHTML = '<option value="">No ROMs in frontend/roms/</option>';
+ startBtn.disabled = true;
+ return;
+ }
+
+ for (const rom of roms) {
+ const opt = document.createElement("option");
+ opt.value = rom.file;
+ opt.textContent = rom.file + " (" + formatSize(rom.size) + ")";
+ opt.dataset.type = rom.type;
+ opt.dataset.partCount = rom.partCount || "0";
+ select.appendChild(opt);
+ }
+
+ select.disabled = false;
+ startBtn.disabled = false;
+ log("Detected " + roms.length + " ROMs");
+ } catch (e) {
+ statusEl.innerHTML = '<span class="warn">Error loading ROMs: ' + e.message + '</span>';
+ }
+ }
+
+ startBtn.addEventListener("click", async () => {
+ const file = select.value;
+ if (!file) return;
+
+ startBtn.disabled = true;
+ select.disabled = true;
+
+ try {
+ const res = await fetch("api/roms");
+ const data = await res.json();
+ const rom = (data.roms || []).find(r => r.file === file);
+ if (!rom) { log("ROM not found: " + file); startBtn.disabled = false; select.disabled = false; return; }
+
+ let gameUrl = rom.url;
+
+ // Handle multi-part ROMs
+ if (rom.partCount && rom.partCount > 1) {
+ log("ROM split into " + rom.partCount + " parts, merging...");
+ try {
+ gameUrl = await mergeFiles(
+ getParts(rom.url, 1, rom.partCount),
+ (index) => {
+ log("Fetched part " + (index + 1) + "/" + rom.partCount);
+ }
+ );
+ log("Merged into blob URL: " + gameUrl);
+ } catch (e) {
+ log("Error merging parts: " + e.message);
+ startBtn.disabled = false;
+ select.disabled = false;
+ return;
+ }
+ }
+
+ // Set up EJS for this ROM
+ window.EJS_gameUrl = gameUrl;
+ window.EJS_externalFiles = buildExternalFiles(rom);
+ window.EJS_gameName = rom.file;
+ 
+ romSelector.classList.add("hidden");
+ log("Starting: " + rom.file);
+ 
+ const script = document.createElement("script");
+ script.src = "data/loader.js";
+ document.body.appendChild(script);
+ 
+ // JIT diagnostic poller
+ let diagCount = 0;
+ const poller = setInterval(() => {
+ if (!window.EJS_emulator || !window.EJS_emulator.Module) { diagCount++; return; }
+ const M = window.EJS_emulator.Module;
+ const prof = M._prof || {};
+ const cacheSize = M._wasmBlockCache ? Object.keys(M._wasmBlockCache).length : -1;
+ const trapCount = M._wasmTrapCount || 0;
+ const jitReady = M._jitImportsResolved ? true : false;
+ log("[JIT] blocks=" + cacheSize + " exec=" + (prof.execCount||0) + " execMs=" + (prof.execMs ? Math.round(prof.execMs) : 0) + " traps=" + trapCount + " jitReady=" + jitReady);
+ diagCount++;
+ if (diagCount > 30) clearInterval(poller);
+ }, 2000);
+ 
+ // FPS + resolution overlay
+ let lastFrame = 0, lastTime = performance.now();
+ const overlay = document.getElementById("overlay");
+ const fpsPoller = setInterval(() => {
+ const emu = window.EJS_emulator;
+ if (!emu) { overlay.textContent = "FPS: --\nRes: --\n(waiting for core...)
