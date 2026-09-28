@@ -16,9 +16,47 @@
  .warn { color: #f88; }
  #romSelector { display: block; }
  #romSelector.hidden { display: none; }
+ 
+ /* Debug Panel */
+ #debugPanel {
+ position: fixed;
+ bottom: 8px;
+ right: 8px;
+ z-index: 9998;
+ background: rgba(0,0,0,0.9);
+ color: #0f0;
+ font-family: monospace;
+ font-size: 11px;
+ padding: 10px;
+ border: 1px solid #444;
+ border-radius: 4px;
+ max-width: 400px;
+ max-height: 300px;
+ overflow-y: auto;
+ white-space: pre-wrap;
+ word-wrap: break-word;
+ }
+ #debugPanel.hidden { display: none; }
+ #debugToggle {
+ position: fixed;
+ bottom: 8px;
+ left: 8px;
+ z-index: 9998;
+ padding: 6px 12px;
+ background: #222;
+ color: #0f0;
+ border: 1px solid #444;
+ border-radius: 4px;
+ cursor: pointer;
+ font-family: monospace;
+ font-size: 12px;
+ }
+ #debugToggle:hover { background: #333; }
  </style>
  </head>
  <body>
+ <button id="debugToggle">📊 Debug Panel</button>
+ <div id="debugPanel" class="hidden"></div>
  <div id="overlay">FPS: --<br>Res: --</div>
  <div id="wrap">
  <h2>Flycast WASM (Dreamcast) — local test</h2>
@@ -41,6 +79,52 @@
  <div id="game"></div>
  <div id="log"></div>
  </div>
+
+ <script>
+ // Debug logging system
+ const debugPanel = document.getElementById("debugPanel");
+ const debugToggle = document.getElementById("debugToggle");
+ let debugLogs = [];
+
+ function debugLog(msg, type = "info") {
+ const timestamp = new Date().toISOString().slice(11,19);
+ const prefix = type === "error" ? "❌" : type === "warn" ? "⚠️" : "ℹ️";
+ const logEntry = `[${timestamp}] ${prefix} ${msg}`;
+ debugLogs.push(logEntry);
+ if (debugLogs.length > 50) debugLogs.shift();
+ updateDebugPanel();
+ console.log(msg);
+ }
+
+ function updateDebugPanel() {
+ debugPanel.textContent = debugLogs.join("\n");
+ debugPanel.scrollTop = debugPanel.scrollHeight;
+ }
+
+ debugToggle.addEventListener("click", () => {
+ debugPanel.classList.toggle("hidden");
+ debugToggle.textContent = debugPanel.classList.contains("hidden") ? "📊 Debug Panel" : "📊 Hide Debug";
+ });
+
+ // Override console.log to also show in debug panel
+ const origLog = console.log;
+ console.log = function(...args) {
+ origLog.apply(console, args);
+ debugLog(args.join(" "));
+ };
+
+ const origError = console.error;
+ console.error = function(...args) {
+ origError.apply(console, args);
+ debugLog(args.join(" "), "error");
+ };
+
+ const origWarn = console.warn;
+ console.warn = function(...args) {
+ origWarn.apply(console, args);
+ debugLog(args.join(" "), "warn");
+ };
+ </script>
 
  <script>
  // Patch HTMLCanvasElement.getContext to handle GL_EXTENSIONS (0x1F03)
@@ -131,13 +215,14 @@
  window.EJS_threads = false;
  window.EJS_disableCue = true;
 
-  window.EJS_defaultOptions = {
-  reicast_frameskip: "0",
-  reicast_hd_resolution_scale: "1",
-  reicast_render_type: "OpenGL",
-  reicast_widescreen_hack: "disabled",
-  reicast_sync_ghosts: "disabled"
-};
+ // MvC2 optimized Flycast settings for Dell Chromebook 3100
+ window.EJS_defaultOptions = {
+ reicast_frameskip: "0",
+ reicast_hd_resolution_scale: "1",
+ reicast_render_type: "OpenGL",
+ reicast_widescreen_hack: "disabled",
+ reicast_sync_ghosts: "disabled"
+ };
 
  // BIOS file mapping
  const BIOS_FILES = {
@@ -166,15 +251,50 @@
  return Math.round(bytes / 1024) + " KB";
  }
 
- function startEJS(gameUrl, gameName) {
+ function startEJS(gameUrl, gameName, coreOptions) {
  window.EJS_gameUrl = gameUrl;
  window.EJS_externalFiles = buildExternalFiles({ type: "single", tracks: [] });
  window.EJS_gameName = gameName;
  
+ // Apply core options (backend or default)
+ if (coreOptions) {
+ window.EJS_defaultOptions = coreOptions;
+ } else {
+ window.EJS_defaultOptions = {
+ reicast_frameskip: "0",
+ reicast_hd_resolution_scale: "1",
+ reicast_render_type: "OpenGL",
+ reicast_widescreen_hack: "disabled",
+ reicast_sync_ghosts: "disabled"
+ };
+ }
+ 
  document.getElementById("romSelector").classList.add("hidden");
  log("Starting: " + gameName);
+ debugLog("=== STARTING EMULATOR ===");
+ debugLog("Game: " + gameName);
+ debugLog("URL: " + gameUrl);
+ debugLog("Core Options: " + JSON.stringify(window.EJS_defaultOptions, null, 2));
  
  const script = document.createElement("script");
+ script.onerror = () => {
+ debugLog("ERROR loading loader.js!", "error");
+ };
+ script.onload = () => {
+ debugLog("loader.js loaded successfully");
+ // Delay to let emulator initialize
+ setTimeout(() => {
+ if (window.EJS_emulator && window.EJS_emulator.Module) {
+ const M = window.EJS_emulator.Module;
+ debugLog("=== FLYCAST CORE INFO ===");
+ debugLog("Module initialized: yes");
+ debugLog("WASM memory: " + (M.memory ? "allocated" : "not found"));
+ debugLog("Available exports: " + (M.asm ? Object.keys(M.asm.env).slice(0, 10).join(", ") + "..." : "none"));
+ } else {
+ debugLog("Emulator module not yet ready", "warn");
+ }
+ }, 2000);
+ };
  script.src = "data/loader.js";
  document.body.appendChild(script);
  
@@ -188,6 +308,18 @@
  const trapCount = M._wasmTrapCount || 0;
  const jitReady = M._jitImportsResolved ? true : false;
  log("[JIT] blocks=" + cacheSize + " exec=" + (prof.execCount||0) + " execMs=" + (prof.execMs ? Math.round(prof.execMs) : 0) + " traps=" + trapCount + " jitReady=" + jitReady);
+ 
+ if (diagCount === 3) {
+ debugLog("=== JIT COMPILATION STATUS ===");
+ debugLog("Compiled blocks: " + cacheSize);
+ debugLog("Executed blocks: " + (prof.execCount || 0));
+ debugLog("JIT Ready: " + jitReady);
+ if (cacheSize > 1000 && prof.execCount < 100) {
+ debugLog("⚠️ WARNING: Many blocks compiled but few executed!", "warn");
+ debugLog("This suggests fastmem or imports are failing", "warn");
+ }
+ }
+ 
  diagCount++;
  if (diagCount > 30) clearInterval(poller);
  }, 2000);
@@ -217,133 +349,3 @@
  overlay.textContent = "FPS: " + fps.toFixed(1) + "\nRes: n/a";
  }
  } catch(e) {
- overlay.textContent = "FPS: --\nRes: --\nerr: " + e.message;
- }
- }, 1000);
- }
-
- // ============ DIRECT URL MODE ============
- if (useDirectUrl) {
- document.getElementById("romSelector").classList.add("hidden");
- startEJS(directGameUrl, directGameName);
- } else {
- // ============ FILE UPLOAD ============
- const fileInput = document.getElementById("fileUpload");
- const uploadBtn = document.getElementById("uploadStart");
- const statusEl = document.getElementById("status");
-
- fileInput.addEventListener("change", (e) => {
- const file = e.target.files[0];
- if (!file) { uploadBtn.disabled = true; return; }
- statusEl.textContent = "File selected: " + file.name + " (" + formatSize(file.size) + ")";
- uploadBtn.disabled = false;
- });
-
- uploadBtn.addEventListener("click", () => {
- const file = fileInput.files[0];
- if (!file) return;
- uploadBtn.disabled = true;
- fileInput.disabled = true;
- statusEl.textContent = "Loading...";
- 
- const gameUrl = URL.createObjectURL(file);
- startEJS(gameUrl, file.name);
- });
-
- // ============ API ROM PICKER MODE ============
- async function loadRoms() {
- try {
- const res = await fetch("api/roms");
- const data = await res.json();
- const roms = data.roms || [];
- const bios = data.bios || {};
-
- if (data.coreVersion) {
- window.EJS_paths = {
- "flycast-wasm.data": "data/cores/flycast-wasm.data?v=" + data.coreVersion,
- "flycast-legacy-wasm.data": "data/cores/flycast-legacy-wasm.data?v=" + data.coreVersion
- };
- }
-
- if (!bios.present) {
- statusEl.innerHTML = '<span class="warn">Missing BIOS: copy ' +
- (bios.needed || ["dc_boot.bin", "dc_flash.bin"]).join(", ") + ' to frontend/bios/</span>';
- }
-
- const select = document.getElementById("rom");
- const startBtn = document.getElementById("start");
-
- select.innerHTML = "";
- if (roms.length === 0) {
- select.innerHTML = '<option value="">No ROMs in frontend/roms/</option>';
- startBtn.disabled = true;
- return;
- }
-
- for (const rom of roms) {
- const opt = document.createElement("option");
- opt.value = rom.file;
- opt.textContent = rom.file + " (" + formatSize(rom.size) + ")";
- opt.dataset.type = rom.type;
- opt.dataset.partCount = rom.partCount || "0";
- select.appendChild(opt);
- }
-
- select.disabled = false;
- startBtn.disabled = false;
- log("Detected " + roms.length + " ROMs");
- } catch (e) {
- statusEl.innerHTML = '<span class="warn">Error loading ROMs: ' + e.message + '</span>';
- }
- }
-
- const select = document.getElementById("rom");
- const startBtn = document.getElementById("start");
-
- startBtn.addEventListener("click", async () => {
- const file = select.value;
- if (!file) return;
-
- startBtn.disabled = true;
- select.disabled = true;
-
- try {
- const res = await fetch("api/roms");
- const data = await res.json();
- const rom = (data.roms || []).find(r => r.file === file);
- if (!rom) { log("ROM not found: " + file); startBtn.disabled = false; select.disabled = false; return; }
-
- let gameUrl = rom.url;
-
- // Handle multi-part ROMs
- if (rom.partCount && rom.partCount > 1) {
- log("ROM split into " + rom.partCount + " parts, merging...");
- try {
- gameUrl = await mergeFiles(
- getParts(rom.url, 1, rom.partCount),
- (index) => {
- log("Fetched part " + (index + 1) + "/" + rom.partCount);
- }
- );
- log("Merged into blob URL: " + gameUrl);
- } catch (e) {
- log("Error merging parts: " + e.message);
- startBtn.disabled = false;
- select.disabled = false;
- return;
- }
- }
-
- startEJS(gameUrl, rom.file);
- } catch (e) {
- log("Error: " + e.message);
- startBtn.disabled = false;
- select.disabled = false;
- }
- });
-
- loadRoms();
- }
- </script>
- </body>
-</html>
