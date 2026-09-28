@@ -256,7 +256,6 @@
  window.EJS_externalFiles = buildExternalFiles({ type: "single", tracks: [] });
  window.EJS_gameName = gameName;
  
- // Apply core options (backend or default)
  if (coreOptions) {
  window.EJS_defaultOptions = coreOptions;
  } else {
@@ -276,27 +275,66 @@
  debugLog("URL: " + gameUrl);
  debugLog("Core Options: " + JSON.stringify(window.EJS_defaultOptions, null, 2));
  
+ // Timeout watchdog - if loader doesn't load in 10 seconds, something is wrong
+ let loaderTimeout = setTimeout(() => {
+ debugLog("ERROR: loader.js did not load after 10 seconds!", "error");
+ debugLog("Check browser console for CORS/network errors", "error");
+ debugLog("Try refreshing the page", "error");
+ }, 10000);
+ 
  const script = document.createElement("script");
- script.onerror = () => {
- debugLog("ERROR loading loader.js!", "error");
+ 
+ script.onerror = (e) => {
+ clearTimeout(loaderTimeout);
+ debugLog("ERROR loading loader.js: " + (e.message || "Unknown error"), "error");
+ debugLog("Check that data/loader.js exists and is accessible", "error");
  };
+ 
  script.onload = () => {
- debugLog("loader.js loaded successfully");
- // Delay to let emulator initialize
- setTimeout(() => {
- if (window.EJS_emulator && window.EJS_emulator.Module) {
+ clearTimeout(loaderTimeout);
+ debugLog("✓ loader.js loaded successfully");
+ 
+ // Second watchdog - if emulator doesn't initialize in 5 seconds
+ let initTimeout = setTimeout(() => {
+ debugLog("WARNING: Emulator not initializing (5s elapsed)", "warn");
+ debugLog("Checking for errors...", "warn");
+ if (!window.EJS_emulator) {
+ debugLog("ERROR: window.EJS_emulator was never created", "error");
+ }
+ }, 5000);
+ 
+ // Poll for emulator initialization
+ let initCheckCount = 0;
+ const initChecker = setInterval(() => {
+ if (window.EJS_emulator) {
+ clearTimeout(initTimeout);
+ clearInterval(initChecker);
+ debugLog("✓ Emulator module initialized");
+ 
+ if (window.EJS_emulator.Module) {
  const M = window.EJS_emulator.Module;
  debugLog("=== FLYCAST CORE INFO ===");
- debugLog("Module initialized: yes");
- debugLog("WASM memory: " + (M.memory ? "allocated" : "not found"));
- debugLog("Available exports: " + (M.asm ? Object.keys(M.asm.env).slice(0, 10).join(", ") + "..." : "none"));
- } else {
- debugLog("Emulator module not yet ready", "warn");
+ debugLog("✓ Module loaded");
+ debugLog("WASM Memory: " + (M.memory ? "OK" : "NOT FOUND"));
  }
- }, 2000);
+ } else {
+ initCheckCount++;
+ if (initCheckCount % 5 === 0) {
+ debugLog("Waiting for emulator init... (" + (initCheckCount / 2) + "s)");
+ }
+ }
+ }, 200);
  };
+ 
  script.src = "data/loader.js";
+ script.async = true;
+ 
+ debugLog("Appending loader.js script tag...");
+ try {
  document.body.appendChild(script);
+ } catch (e) {
+ debugLog("ERROR appending script: " + e.message, "error");
+ }
  
  // JIT diagnostic poller
  let diagCount = 0;
@@ -350,9 +388,10 @@
  }
  } catch(e) {
  overlay.textContent = "FPS: --\nRes: --\nerr: " + e.message;
+ debugLog("FPS poller error: " + e.message, "error");
  }
  }, 1000);
- }
+}
 
  // ============ FILE UPLOAD ============
  if (!useDirectUrl) {
